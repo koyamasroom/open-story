@@ -1,0 +1,21 @@
+# 週1回、Instagramの合い鍵（60日で切れる）を延長する
+name: 合い鍵の延長
+
+on:
+  schedule:
+    - cron: "17 3 * * 3"   # 毎週水曜 12:17（日本時間）
+  workflow_dispatch:
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 合い鍵を延長する
+        env:
+          IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+          GH_PAT: ${{ secrets.GH_PAT }}
+        run: python refresh_token.py

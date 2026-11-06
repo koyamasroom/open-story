@@ -1,0 +1,61 @@
+# 毎日、開店時刻にOPEN告知ストーリーを流す
+# 時間は世界標準時（UTC）で書く。日本時間 = UTC + 9時間
+# 毎時0分は混んで遅れやすいので、開店の15分前に起動して、開店時刻まで待ってから流す
+name: OPEN告知ストーリー
+
+on:
+  schedule:
+    - cron: "45 7 * * 1-5"   # 月〜金 16:45（日本時間）起動 → 17:00に流す
+    - cron: "53 7 * * 1-5"   # 月〜金 予備（もう流していれば何もしない）
+    - cron: "45 5 * * 0,6"   # 土日 14:45（日本時間）起動 → 15:00に流す
+    - cron: "53 5 * * 0,6"   # 土日 予備
+  workflow_dispatch:          # 手で動かすボタン（テスト用）
+    inputs:
+      mode:
+        description: "dry=テスト（つながない）／check=確認（投稿しない）／live=本番（流す）"
+        type: choice
+        options: [dry, check, live]
+        default: dry
+      day:
+        description: "曜日（空なら今日）例：月"
+        required: false
+        default: ""
+
+permissions:
+  contents: write   # 記録ファイル（state/posted.json）を保存するため
+
+concurrency:
+  group: open-story
+  cancel-in-progress: false
+
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: ストーリーを流す
+        env:
+          IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+          # 手で動かした時は選んだモード。毎日の自動は、設定の変数 POST_MODE（無ければテスト）
+          POST_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || vars.POST_MODE || 'dry' }}
+          MANUAL: ${{ github.event_name == 'workflow_dispatch' }}
+          DAY: ${{ inputs.day }}
+        run: |
+          ARGS=""
+          if [ "$MANUAL" = "true" ]; then ARGS="--manual"; fi
+          if [ -n "$DAY" ]; then ARGS="$ARGS --day $DAY"; fi
+          python post_story.py $ARGS
+      - name: 記録を保存
+        if: always()
+        run: |
+          git config user.name "open-story-bot"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add state/posted.json
+          if ! git diff --cached --quiet; then
+            git commit -m "ストーリーの記録を更新"
+            git push
+          fi
