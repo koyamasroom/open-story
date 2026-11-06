@@ -1,1 +1,14 @@
-{"posts": [], "last_posted": {}}
+{
+  "posts": [
+    {
+      "date": "2026-11-07",
+      "day": "土",
+      "image": "土/本日も10時〜 営業しております 皆さまのご来店を 心よりお待ちしております.mp4",
+      "mode": "確認",
+      "media_id": null,
+      "time": "03:29",
+      "manual": true
+    }
+  ],
+  "last_posted": {}
+}
