@@ -1,0 +1,61 @@
+# チーナテリアハナヤ：毎日（月曜定休）11:00 にOPEN告知ストーリーを流す
+# 時間は世界標準時（UTC）で書く。日本時間 = UTC + 9時間
+# 毎時0分は混んで遅れやすいので、開店の15分前に起動して、開店時刻まで待ってから流す
+name: OPEN告知ストーリー（ハナヤ）
+
+on:
+  schedule:
+    - cron: "45 1 * * 0,2-6"   # 火〜日 10:45（日本時間）起動 → 11:00に流す
+    - cron: "53 1 * * 0,2-6"   # 予備（もう流していれば何もしない）
+  workflow_dispatch:            # 手で動かすボタン（テスト用）
+    inputs:
+      mode:
+        description: "dry=テスト（つながない）／check=確認（投稿しない）／live=本番（流す）"
+        type: choice
+        options: [dry, check, live]
+        default: dry
+      day:
+        description: "曜日（空なら今日）例：火"
+        required: false
+        default: ""
+
+permissions:
+  contents: write   # 記録ファイル（state/posted_hanaya.json）を保存するため
+
+concurrency:
+  group: open-story-hanaya
+  cancel-in-progress: false
+
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: ストーリーを流す
+        env:
+          IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+          IG_ACCESS_TOKEN_HANAYA: ${{ secrets.IG_ACCESS_TOKEN_HANAYA }}
+          # 手で動かした時は選んだモード。毎日の自動は、設定の変数 POST_MODE_HANAYA（無ければテスト）
+          POST_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || vars.POST_MODE_HANAYA || 'dry' }}
+          MANUAL: ${{ github.event_name == 'workflow_dispatch' }}
+          DAY: ${{ inputs.day }}
+        run: |
+          ARGS="--store hanaya"
+          if [ "$MANUAL" = "true" ]; then ARGS="$ARGS --manual"; fi
+          if [ -n "$DAY" ]; then ARGS="$ARGS --day $DAY"; fi
+          python post_story.py $ARGS
+      - name: 記録を保存
+        if: always()
+        run: |
+          git config user.name "open-story-bot"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add state/
+          if ! git diff --cached --quiet; then
+            git commit -m "ストーリーの記録を更新（ハナヤ）"
+            git pull --rebase -q
+            git push
+          fi

@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""バルダイニングイッツ OPEN告知ストーリーの自動投稿。
+"""OPEN告知ストーリーの自動投稿（バルダイニングイッツ／チーナテリアハナヤ）。
 
-- 今日の曜日のフォルダ（画像/月 など）から、いちばん長く流していない画像・動画を選ぶ
+- お店（--store）の今日の曜日のフォルダから、いちばん長く流していない画像・動画を選ぶ
   （画像は JPEG、動画は MP4 / MOV）
 - 開店時刻まで待ってから、Instagram 公式API でストーリーに流す
-- 流した記録は state/posted.json に残す
+- 流した記録は state/ に残す（お店ごとに別ファイル）
 
 動き方（環境変数 POST_MODE）:
   dry   … テスト。どの画像を流すか表示するだけ。Instagram には一切つながない（初期設定）
@@ -26,16 +26,30 @@ from zoneinfo import ZoneInfo
 
 JST = ZoneInfo("Asia/Tokyo")
 ROOT = Path(os.environ.get("OPEN_STORY_ROOT", Path(__file__).resolve().parent))
-IMAGE_DIR = ROOT / "画像"
-STATE_FILE = ROOT / "state" / "posted.json"
-
 # datetime.weekday(): 0=月 … 6=日
 WEEKDAYS = ["月", "火", "水", "木", "金", "土", "日"]
-OPEN_TIME = {"月": (17, 0), "火": (17, 0), "水": (17, 0), "木": (17, 0),
-             "金": (17, 0), "土": (15, 0), "日": (15, 0)}
 
-# 間違ったアカウントに流さないための確認
-EXPECTED_USERNAME = os.environ.get("IG_EXPECTED_USERNAME", "eatit_0601")
+# お店ごとの設定。open_time に無い曜日は定休日（流さない）
+STORES = {
+    "its": {
+        "name": "バルダイニングイッツ",
+        "folder": "画像",
+        "state": "posted.json",
+        "username": "eatit_0601",          # 間違ったアカウントに流さないための確認
+        "token_env": "IG_ACCESS_TOKEN",
+        "open_time": {"月": (17, 0), "火": (17, 0), "水": (17, 0), "木": (17, 0),
+                      "金": (17, 0), "土": (15, 0), "日": (15, 0)},
+    },
+    "hanaya": {
+        "name": "チーナテリアハナヤ",
+        "folder": "ハナヤ",
+        "state": "posted_hanaya.json",
+        "username": "cinateria2021",
+        "token_env": "IG_ACCESS_TOKEN_HANAYA",  # 無ければ IG_ACCESS_TOKEN を使う
+        "open_time": {d: (11, 0) for d in ["火", "水", "木", "金", "土", "日"]},  # 月曜定休
+    },
+}
+STORE = STORES["its"]  # main() で --store に合わせて入れ替える
 # 統合ログイン（システムユーザーの合い鍵・無期限）は graph.facebook.com につなぐ
 API_BASE = "https://graph.facebook.com/" + os.environ.get("IG_API_VERSION", "v27.0")
 
@@ -52,16 +66,20 @@ class StoryError(Exception):
 
 
 # ---------- 記録 ----------
+def state_file():
+    return ROOT / "state" / STORE["state"]
+
+
 def load_state():
-    if STATE_FILE.exists():
-        return json.loads(STATE_FILE.read_text(encoding="utf-8"))
+    if state_file().exists():
+        return json.loads(state_file().read_text(encoding="utf-8"))
     return {"posts": [], "last_posted": {}}
 
 
 def save_state(state):
     state["posts"] = state["posts"][-200:]
-    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    STATE_FILE.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n",
+    state_file().parent.mkdir(parents=True, exist_ok=True)
+    state_file().write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n",
                           encoding="utf-8")
 
 
@@ -71,7 +89,7 @@ def nfc(s):
 
 
 def pick_image(day, state):
-    folder = IMAGE_DIR / day
+    folder = ROOT / STORE["folder"] / day
     files = sorted(p for p in folder.glob("*") if p.is_file() and not p.name.startswith("."))
     usable = []
     for p in files:
@@ -83,7 +101,7 @@ def pick_image(day, state):
         else:
             print(f"⚠️ {day}/{p.name} は使えない形式なので飛ばします（画像はJPEG、動画はMP4かMOV）")
     if not usable:
-        raise StoryError(f"「画像/{day}」に使える画像・動画がありません。今日は流しません。")
+        raise StoryError(f"「{STORE['folder']}/{day}」に使える画像・動画がありません。今日は流しません。")
     last = state.get("last_posted", {})
 
     def key(p):
@@ -98,7 +116,7 @@ def public_url(day, image):
     if not repo:
         raise StoryError("GITHUB_REPOSITORY がありません（GitHubの上で動かしてください）")
     branch = os.environ.get("GITHUB_REF_NAME", "main")
-    path = urllib.parse.quote(nfc(f"画像/{day}/{image.name}"))
+    path = urllib.parse.quote(nfc(f"{STORE['folder']}/{day}/{image.name}"))
     return f"https://raw.githubusercontent.com/{repo}/{branch}/{path}"
 
 
@@ -129,11 +147,11 @@ def check_account(token):
             continue
         name = acc.get("username") or api("GET", ig_id, token, fields="username").get("username")
         found.append(name)
-        if name == EXPECTED_USERNAME:
+        if name == STORE["username"]:
             print(f"✅ アカウント確認OK：@{name}")
             return ig_id
     raise StoryError(f"合い鍵につながっているアカウントは {found or 'なし'} でした。"
-                     f"@{EXPECTED_USERNAME} 以外には流さないので止めます。")
+                     f"@{STORE['username']} 以外には流さないので止めます。")
 
 
 def is_video(path):
@@ -161,7 +179,7 @@ def create_container(token, user_id, media_url, video):
 
 # ---------- 時間 ----------
 def wait_until_open(now, day):
-    h, m = OPEN_TIME[day]
+    h, m = STORE["open_time"][day]
     open_at = now.replace(hour=h, minute=m, second=0, microsecond=0)
     if now < open_at:
         wait = (open_at - now).total_seconds()
@@ -179,7 +197,11 @@ def main():
     ap.add_argument("--manual", action="store_true",
                     help="手動で動かす（開店時刻を待たない・今日すでに動いていてもやる）")
     ap.add_argument("--day", choices=WEEKDAYS, help="曜日を指定する（テスト用。省略で今日）")
+    ap.add_argument("--store", choices=list(STORES), default="its",
+                    help="お店（its=バルダイニングイッツ／hanaya=チーナテリアハナヤ）")
     args = ap.parse_args()
+    global STORE
+    STORE = STORES[args.store]
 
     mode = os.environ.get("POST_MODE", "dry").strip() or "dry"
     if mode not in MODE_NAMES:
@@ -187,7 +209,11 @@ def main():
     now = datetime.now(JST)
     today = now.date().isoformat()
     day = args.day or WEEKDAYS[now.weekday()]
+    print(f"🏠 {STORE['name']}（@{STORE['username']}）")
     print(f"📅 {today}（{day}）／ モード：{MODE_NAMES[mode]}")
+    if day not in STORE["open_time"]:
+        print(f"今日（{day}）は定休日なので、何もしません")
+        return
 
     state = load_state()
     # 手で動かした記録（テスト・確認）は数えない。毎日の自動で動いた日だけ「もう動いた」とみなす
@@ -195,9 +221,15 @@ def main():
         print("今日はもう動いているので、何もしません（予備の起動）")
         return
 
-    image = pick_image(day, state)
+    try:
+        image = pick_image(day, state)
+    except StoryError as e:
+        if mode == "dry":  # テスト中は、動画がまだ無くても失敗メールを送らない
+            print(f"⚠️ {e}（テスト中なので、失敗扱いにはしません）")
+            return
+        raise
     rel = nfc(f"{day}/{image.name}")
-    print(f"{'🎬 今日の動画' if is_video(image) else '🖼 今日の画像'}：画像/{rel}")
+    print(f"{'🎬 今日の動画' if is_video(image) else '🖼 今日の画像'}：{STORE['folder']}/{rel}")
 
     if not args.manual:
         wait_until_open(datetime.now(JST), day)
@@ -206,9 +238,10 @@ def main():
     if mode == "dry":
         print("（テストなので、Instagramにはつないでいません）")
     else:
-        token = os.environ.get("IG_ACCESS_TOKEN", "").strip()
+        token = (os.environ.get(STORE["token_env"], "").strip()
+                 or os.environ.get("IG_ACCESS_TOKEN", "").strip())
         if not token:
-            raise StoryError("合い鍵（IG_ACCESS_TOKEN）が設定されていません")
+            raise StoryError(f"合い鍵（{STORE['token_env']}）が設定されていません")
         url = public_url(day, image)
         user_id = check_account(token)
         cid = create_container(token, user_id, url, is_video(image))

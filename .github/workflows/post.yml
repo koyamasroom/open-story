@@ -1,7 +1,7 @@
 # 毎日、開店時刻にOPEN告知ストーリーを流す
 # 時間は世界標準時（UTC）で書く。日本時間 = UTC + 9時間
 # 毎時0分は混んで遅れやすいので、開店の15分前に起動して、開店時刻まで待ってから流す
-name: OPEN告知ストーリー
+name: OPEN告知ストーリー（イッツ）
 
 on:
   schedule:
@@ -56,6 +56,7 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add state/posted.json
           if ! git diff --cached --quiet; then
-            git commit -m "ストーリーの記録を更新"
+            git commit -m "ストーリーの記録を更新（イッツ）"
+            git pull --rebase -q
             git push
           fi
