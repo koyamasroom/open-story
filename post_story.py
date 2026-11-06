@@ -190,7 +190,8 @@ def main():
     print(f"📅 {today}（{day}）／ モード：{MODE_NAMES[mode]}")
 
     state = load_state()
-    if not args.manual and any(p["date"] == today for p in state["posts"]):
+    # 手で動かした記録（テスト・確認）は数えない。毎日の自動で動いた日だけ「もう動いた」とみなす
+    if not args.manual and any(p["date"] == today and not p.get("manual") for p in state["posts"]):
         print("今日はもう動いているので、何もしません（予備の起動）")
         return
 
@@ -219,7 +220,8 @@ def main():
 
     state["posts"].append({"date": today, "day": day, "image": rel,
                            "mode": MODE_NAMES[mode], "media_id": media_id,
-                           "time": datetime.now(JST).strftime("%H:%M")})
+                           "time": datetime.now(JST).strftime("%H:%M"),
+                           "manual": args.manual})
     if mode != "check":  # テストでも順番が回る様子を見られるように記録する
         state["last_posted"][rel] = today
     save_state(state)
