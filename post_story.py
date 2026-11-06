@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """バルダイニングイッツ OPEN告知ストーリーの自動投稿。
 
-- 今日の曜日のフォルダ（画像/月 など）から、いちばん長く流していない画像を選ぶ
+- 今日の曜日のフォルダ（画像/月 など）から、いちばん長く流していない画像・動画を選ぶ
+  （画像は JPEG、動画は MP4 / MOV）
 - 開店時刻まで待ってから、Instagram 公式API でストーリーに流す
 - 流した記録は state/posted.json に残す
 
@@ -40,6 +41,9 @@ API_BASE = "https://graph.instagram.com/" + os.environ.get("IG_API_VERSION", "v2
 MAX_WAIT_MINUTES = 75     # 開店のこれより前に起動したら、待たずに終わる
 MAX_LATE_MINUTES = 180    # 開店からこれ以上遅れたら、流さない
 MODE_NAMES = {"dry": "テスト", "check": "確認", "live": "本番"}
+IMAGE_EXT = (".jpg", ".jpeg")
+VIDEO_EXT = (".mp4", ".mov")
+VIDEO_MAX_MB = 100  # Instagram のストーリー動画の上限
 
 
 class StoryError(Exception):
@@ -68,19 +72,24 @@ def nfc(s):
 def pick_image(day, state):
     folder = IMAGE_DIR / day
     files = sorted(p for p in folder.glob("*") if p.is_file() and not p.name.startswith("."))
-    jpegs = [p for p in files if p.suffix.lower() in (".jpg", ".jpeg")]
+    usable = []
     for p in files:
-        if p not in jpegs:
-            print(f"⚠️ {day}/{p.name} はJPEGではないので使いません（InstagramはJPEGだけ受け付けます）")
-    if not jpegs:
-        raise StoryError(f"「画像/{day}」に使えるJPEG画像がありません。今日は流しません。")
+        ext = p.suffix.lower()
+        if ext in VIDEO_EXT and p.stat().st_size > VIDEO_MAX_MB * 1024 * 1024:
+            print(f"⚠️ {day}/{p.name} は{VIDEO_MAX_MB}MBより大きいので使いません")
+        elif ext in IMAGE_EXT + VIDEO_EXT:
+            usable.append(p)
+        else:
+            print(f"⚠️ {day}/{p.name} は使えない形式なので飛ばします（画像はJPEG、動画はMP4かMOV）")
+    if not usable:
+        raise StoryError(f"「画像/{day}」に使える画像・動画がありません。今日は流しません。")
     last = state.get("last_posted", {})
 
     def key(p):
         rel = nfc(f"{day}/{p.name}")
         return (last.get(rel, ""), nfc(p.name))  # 流したことがない画像（""）が先
 
-    return sorted(jpegs, key=key)[0]
+    return sorted(usable, key=key)[0]
 
 
 def public_url(day, image):
@@ -118,18 +127,27 @@ def check_account(token):
     return me["user_id"]
 
 
-def create_container(token, user_id, image_url):
-    res = api("POST", f"{user_id}/media", token, image_url=image_url, media_type="STORIES")
+def is_video(path):
+    return path.suffix.lower() in VIDEO_EXT
+
+
+def create_container(token, user_id, media_url, video):
+    key = "video_url" if video else "image_url"
+    res = api("POST", f"{user_id}/media", token, media_type="STORIES", **{key: media_url})
     cid = res["id"]
-    for _ in range(30):
-        st = api("GET", cid, token, fields="status_code").get("status_code")
+    kind = "動画" if video else "画像"
+    tries = 60 if video else 30  # 動画は準備に時間がかかる（最大10分待つ）
+    for _ in range(tries):
+        info = api("GET", cid, token, fields="status_code,status")
+        st = info.get("status_code")
         if st == "FINISHED":
-            print("✅ Instagramが画像を受け取りました")
+            print(f"✅ Instagramが{kind}を受け取りました")
             return cid
         if st in ("ERROR", "EXPIRED"):
-            raise StoryError(f"Instagramが画像を受け取れませんでした（{st}）。画像の形式やサイズを確認してください。")
-        time.sleep(5)
-    raise StoryError("Instagramの画像の準備が終わりませんでした（時間切れ）")
+            raise StoryError(f"Instagramが{kind}を受け取れませんでした（{st}：{info.get('status', '')}）。"
+                             f"形式・長さ・サイズを確認してください。")
+        time.sleep(10 if video else 5)
+    raise StoryError(f"Instagramの{kind}の準備が終わりませんでした（時間切れ）")
 
 
 # ---------- 時間 ----------
@@ -169,7 +187,7 @@ def main():
 
     image = pick_image(day, state)
     rel = nfc(f"{day}/{image.name}")
-    print(f"🖼 今日の画像：画像/{rel}")
+    print(f"{'🎬 今日の動画' if is_video(image) else '🖼 今日の画像'}：画像/{rel}")
 
     if not args.manual:
         wait_until_open(datetime.now(JST), day)
@@ -183,7 +201,7 @@ def main():
             raise StoryError("合い鍵（IG_ACCESS_TOKEN）が設定されていません")
         url = public_url(day, image)
         user_id = check_account(token)
-        cid = create_container(token, user_id, url)
+        cid = create_container(token, user_id, url, is_video(image))
         if mode == "check":
             print("（確認なので、ストーリーには流していません）")
         else:
