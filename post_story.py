@@ -36,7 +36,8 @@ OPEN_TIME = {"月": (17, 0), "火": (17, 0), "水": (17, 0), "木": (17, 0),
 
 # 間違ったアカウントに流さないための確認
 EXPECTED_USERNAME = os.environ.get("IG_EXPECTED_USERNAME", "eatit_0601")
-API_BASE = "https://graph.instagram.com/" + os.environ.get("IG_API_VERSION", "v27.0")
+# 統合ログイン（システムユーザーの合い鍵・無期限）は graph.facebook.com につなぐ
+API_BASE = "https://graph.facebook.com/" + os.environ.get("IG_API_VERSION", "v27.0")
 
 MAX_WAIT_MINUTES = 75     # 開店のこれより前に起動したら、待たずに終わる
 MAX_LATE_MINUTES = 180    # 開店からこれ以上遅れたら、流さない
@@ -119,12 +120,20 @@ def api(method, path, token, **params):
 
 
 def check_account(token):
-    me = api("GET", "me", token, fields="user_id,username")
-    if me.get("username") != EXPECTED_USERNAME:
-        raise StoryError(f"つながったアカウントが @{me.get('username')} でした。"
-                         f"@{EXPECTED_USERNAME} 以外には流さないので止めます。")
-    print(f"✅ アカウント確認OK：@{me['username']}")
-    return me["user_id"]
+    """合い鍵につながっているInstagramアカウントの中から、お店のアカウントを探す。"""
+    res = api("GET", "me/assigned_instagram_accounts", token)
+    found = []
+    for acc in res.get("data", []):
+        ig_id = acc.get("id")
+        if not ig_id:
+            continue
+        name = acc.get("username") or api("GET", ig_id, token, fields="username").get("username")
+        found.append(name)
+        if name == EXPECTED_USERNAME:
+            print(f"✅ アカウント確認OK：@{name}")
+            return ig_id
+    raise StoryError(f"合い鍵につながっているアカウントは {found or 'なし'} でした。"
+                     f"@{EXPECTED_USERNAME} 以外には流さないので止めます。")
 
 
 def is_video(path):
