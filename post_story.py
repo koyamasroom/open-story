@@ -53,7 +53,7 @@ STORE = STORES["its"]  # main() で --store に合わせて入れ替える
 # 統合ログイン（システムユーザーの合い鍵・無期限）は graph.facebook.com につなぐ
 API_BASE = "https://graph.facebook.com/" + os.environ.get("IG_API_VERSION", "v27.0")
 
-MAX_WAIT_MINUTES = 75     # 開店のこれより前に起動したら、待たずに終わる
+MAX_WAIT_MINUTES = 100    # 開店のこれより前に起動したら、待たずに終わる（起動は最大70分前）
 MAX_LATE_MINUTES = 180    # 開店からこれ以上遅れたら、流さない
 MODE_NAMES = {"dry": "テスト", "check": "確認", "live": "本番"}
 IMAGE_EXT = (".jpg", ".jpeg")
